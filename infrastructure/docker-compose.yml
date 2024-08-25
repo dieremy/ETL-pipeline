@@ -1,0 +1,116 @@
+services:
+  base:
+    container_name: BASE-IMAGE
+    build:
+      context: ./steps/base
+      dockerfile: Dockerfile
+    networks:
+      - etl-pipeline
+    restart: always
+
+  apache-airflow:
+    container_name: apache-airflow
+    build:
+      context: ./steps/apache-airflow
+      dockerfile: Dockerfile
+    environment:
+      - PSQL_DATABASE=${PSQL_DATABASE}
+      - PSQL_USER=${PSQL_USER}
+      - PSQL_PASSWORD=${PSQL_PASSWORD}
+      - PSQL_ROOT_PASSWORD=${PSQL_ROOT_PASSWORD}
+    ports:
+      - "8080:8080"
+    networks:
+      - etl-pipeline
+    depends_on:
+      - postgres
+    volumes:
+      - dag:/opt/airflow/dag
+    restart: always
+
+  postgres:
+    container_name: postgres
+    build:
+      context: ./steps/postgres
+      dockerfile: Dockerfile
+    environment:
+      - PSQL_DATABASE=${PSQL_DATABASE}
+      - PSQL_USER=${PSQL_USER}
+      - PSQL_PASSWORD=${PSQL_PASSWORD}
+      - PSQL_ROOT_PASSWORD=${PSQL_ROOT_PASSWORD}
+    networks:
+      - etl-pipeline
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD", "psql", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  pgbouncer:
+    container_name: pgbouncer
+    build:
+      context: ./steps/pgbouncer
+      dockerfile: Dockerfile
+    ports:
+      - "5432:5432"
+    environment:
+      - PGBOUNCER_LISTEN_PORT=5432
+      - PGBOUNCER_DATABASE=${PSQL_DATABASE}
+      - PGBOUNCER_USER=${PGBOUNCER_USER}
+      - PGBOUNCER_PASSWORD=${PGBOUNCER_PASSWORD}
+      - PGBOUNCER_ALLOW_REMOTE=yes
+      - PGBOUNCER_SERVER_HOST=${PSQL_HOST}
+      - PGBOUNCER_SERVER_PORT=5432
+      - PGBOUNCER_SERVER_DATABASE=${PSQL_DATABASE}
+      - PGBOUNCER_SERVER_USER=${PSQL_USER}
+      - PGBOUNCER_SERVER_PASSWORD=${PSQL_PASSWORD}
+    depends_on:
+      - postgres
+    networks:
+      - etl-pipeline
+
+  grype:
+    container_name: grype
+    build:
+      context: ./steps/grype
+      dockerfile: Dockerfile
+    depends_on:
+    - base
+    - postgres
+    - apache-airflow
+    - pgbouncer
+    volumes:
+    - grype-results:/greport/logs
+    - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - etl-pipeline
+    restart: always
+
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ../data/postgres
+
+  grype-results:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ../data/grype
+
+  dag:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ../data/dag
+
+networks:
+  etl-pipeline:
+    driver: bridge
